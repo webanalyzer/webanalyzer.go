@@ -1,8 +1,9 @@
 package webanalyzer
 
 import (
+	"container/list"
+	"errors"
 	"fmt"
-	"github.com/pkg/errors"
 	"strings"
 )
 
@@ -37,7 +38,7 @@ type Parser struct {
 	cond       string
 	symbolTab  map[string]bool
 	index      int
-	backTokens []*Token
+	backTokens *list.List
 }
 
 func (p *Parser) getToken() (*Token, error) {
@@ -46,19 +47,13 @@ func (p *Parser) getToken() (*Token, error) {
 		case p.cond[p.index] == ' ' || p.cond[p.index] == '\t':
 			p.index += 1
 			continue
-		case p.index + 2 < len(p.cond) &&
-			p.cond[p.index:p.index+2] == "or" &&
-			!strings.ContainsRune(AllowChars, rune(p.cond[p.index+2])):
+		case p.index+2 < len(p.cond) && p.cond[p.index:p.index+2] == "or" && !strings.ContainsRune(AllowChars, rune(p.cond[p.index+2])):
 			p.index += 2
 			return &Token{Type: OR}, nil
-		case p.index + 3 < len(p.cond) &&
-			p.cond[p.index:p.index+3] == "and" &&
-			!strings.ContainsRune(AllowChars, rune(p.cond[p.index+3])):
+		case p.index+3 < len(p.cond) && p.cond[p.index:p.index+3] == "and" && !strings.ContainsRune(AllowChars, rune(p.cond[p.index+3])):
 			p.index += 3
 			return &Token{Type: AND}, nil
-		case p.index + 3 < len(p.cond) &&
-			p.cond[p.index:p.index+3] == "not" &&
-			!strings.ContainsRune(AllowChars, rune(p.cond[p.index+3])):
+		case p.index+3 < len(p.cond) && p.cond[p.index:p.index+3] == "not" && !strings.ContainsRune(AllowChars, rune(p.cond[p.index+3])):
 			p.index += 3
 			return &Token{Type: NOT}, nil
 		case p.cond[p.index] == '(':
@@ -85,15 +80,17 @@ func (p *Parser) getToken() (*Token, error) {
 }
 
 func (p *Parser) popToken() (*Token, error) {
-	if len(p.backTokens) > 0 {
-		return p.backTokens[0], nil
+	if p.backTokens.Len() > 0 {
+		t := p.backTokens.Front()
+		p.backTokens.Remove(t)
+		return t.Value.(*Token), nil
 	}
 
 	return p.getToken()
 }
 
 func (p *Parser) pushToken(token *Token) {
-	p.backTokens = append(p.backTokens, token)
+	p.backTokens.PushBack(token)
 }
 
 func (p *Parser) parseVarExpression() (*result, error) {
@@ -142,7 +139,7 @@ func (p *Parser) parsePrimaryExpression() (*result, error) {
 		return nil, errors.New(fmt.Sprintf("invalid condition, expect RP, got %s(%s)", token.Name, token.Type))
 	}
 
-	return &result{Name: fmt.Sprintf("(%s)", token.Name), Value: token.Value}, nil
+	return &result{Name: fmt.Sprintf("(%s)", r.Name), Value: r.Value}, nil
 }
 
 func (p *Parser) parseNotExpression() (*result, error) {
@@ -242,9 +239,10 @@ func (p *Parser) parseExpression() (*result, error) {
 }
 
 func (p *Parser) Parse(cond string, symbolTab map[string]bool) (bool, error) {
-	p.cond = cond
+	p.cond = strings.ToLower(cond)
 	p.symbolTab = symbolTab
 	p.index = 0
+	p.backTokens = list.New()
 
 	result, err := p.parseExpression()
 	if err != nil {
@@ -252,7 +250,11 @@ func (p *Parser) Parse(cond string, symbolTab map[string]bool) (bool, error) {
 	}
 
 	if result == nil {
-		return false, errors.New("invalid condition")
+		return false, errors.New(fmt.Sprintf("invalid condition %s", cond))
+	}
+
+	if p.backTokens.Len() != 0 {
+		return false, errors.New(fmt.Sprintf("invalid condition %s", cond))
 	}
 
 	return result.Value, nil
